@@ -1,0 +1,72 @@
+from fastapi import FastAPI, HTTPException, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from passlib.context import CryptContext
+from jose import JWTError, jwt
+from datetime import datetime, timedelta
+
+app = FastAPI()
+
+SECRET_KEY = "supersecretkey"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+security = HTTPBearer()
+
+fake_db = {}
+
+# --------------------
+# Utils
+# --------------------
+
+def hash_password(password: str):
+    return pwd_context.hash(password)
+
+def verify_password(password: str, hashed: str):
+    return pwd_context.verify(password, hashed)
+
+def create_access_token(data: dict):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+def verify_token(token: str):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+# --------------------
+# Routes
+# --------------------
+
+@app.post("/register")
+def register(username: str, password: str):
+    if username in fake_db:
+        raise HTTPException(status_code=400, detail="User already exists")
+
+    fake_db[username] = {
+        "username": username,
+        "password": hash_password(password)
+    }
+
+    return {"message": "User created successfully"}
+
+@app.post("/login")
+def login(username: str, password: str):
+    user = fake_db.get(username)
+
+    if not user or not verify_password(password, user["password"]):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    access_token = create_access_token({"sub": username})
+
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@app.get("/protected")
+def protected_route(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    token = credentials.credentials
+    payload = verify_token(token)
+    return {"message": f"Welcome {payload['sub']} 👑"}
